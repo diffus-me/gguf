@@ -1,3 +1,4 @@
+import comfy.float
 import comfy.sd
 import comfy.ops
 import comfy.utils
@@ -14,6 +15,9 @@ from .gguf_connector.quant import quantize, dequantize, QuantError
 from .gguf_connector.quant5a import dequantize_tensor, is_quantized, is_torch_compatible
 from .gguf_connector.mmj import find_mmproj_pair, find_tokenzier_pair
 from .gguf_connector.tkn import get_field, gemma3_tokenizer_builder, tokenizer_builder, tekken_builder
+
+import execution_context
+
 pig = os.path.join(os.path.dirname(__file__), 'version.json')
 with open(pig, 'r') as file:
     data = json.load(file)
@@ -528,15 +532,16 @@ def load_gguf_clip(path):
     return sd
 class LoaderGGUF:
     @classmethod
-    def INPUT_TYPES(s):
-        gguf_names = [x for x in folder_paths.get_filename_list('model_gguf')]
-        return {'required': {'gguf_name': (gguf_names,)}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        gguf_names = [x for x in folder_paths.get_filename_list(context, 'model_gguf')]
+        return {'required': {'gguf_name': (gguf_names,)},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     RETURN_TYPES = 'MODEL',
     FUNCTION = 'load_model'
     CATEGORY = 'gguf'
     TITLE = 'GGUF Loader'
     def load_model(self, gguf_name, dequant_dtype=None, patch_dtype=None,
-        patch_on_device=None):
+        patch_on_device=None, context: execution_context.ExecutionContext=None):
         ops = GGMLOps()
         if dequant_dtype in ('default', None):
             ops.Linear.dequant_dtype = None
@@ -550,7 +555,7 @@ class LoaderGGUF:
             ops.Linear.patch_dtype = patch_dtype
         else:
             ops.Linear.patch_dtype = getattr(torch, patch_dtype)
-        model_path = folder_paths.get_full_path('unet', gguf_name)
+        model_path = folder_paths.get_full_path(context, 'unet', gguf_name)
         # sd, metadata = load_gguf_sd(model_path)
         # model = comfy.sd.load_diffusion_model_state_dict(sd, model_options=
         #     {'custom_operations': ops}, metadata=metadata)
@@ -573,8 +578,8 @@ class LoaderGGUF:
         return model,
 class LoaderGGUFAdvanced(LoaderGGUF):
     @classmethod
-    def INPUT_TYPES(s):
-        model_names = [x for x in folder_paths.get_filename_list('model_gguf')]
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        model_names = [x for x in folder_paths.get_filename_list(context, 'model_gguf')]
         return {'required': {'gguf_name': (model_names,), 'dequant_dtype':
             (['default', 'target', 'float32', 'float16', 'bfloat16'], {
             'default': 'default'}), 'patch_dtype': (['default', 'target',
@@ -591,20 +596,21 @@ def get_device(device):
     return model_options
 class ClipLoaderGGUF:
     @classmethod
-    def INPUT_TYPES(s):
-        base = nodes.CLIPLoader.INPUT_TYPES()
-        return {'required': {'clip_name': (s.get_filename_list(),), 'type':
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        base = nodes.CLIPLoader.INPUT_TYPES(context)
+        return {'required': {'clip_name': (s.get_filename_list(context),), 'type':
                              base['required']['type']},
-                             'optional':{'device':(['default','cpu'],{'advanced':True}),}}
+                'optional':{'device':(['default','cpu'],{'advanced':True}),},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     RETURN_TYPES = 'CLIP',
     FUNCTION = 'load_clip'
     CATEGORY = 'gguf'
     TITLE = 'GGUF CLIP Loader'
     @classmethod
-    def get_filename_list(s):
+    def get_filename_list(s, context: execution_context.ExecutionContext):
         files = []
-        files += folder_paths.get_filename_list('clip')
-        files += folder_paths.get_filename_list('clip_gguf')
+        files += folder_paths.get_filename_list(context, 'clip')
+        files += folder_paths.get_filename_list(context, 'clip_gguf')
         return sorted(files)
     def load_data(self, ckpt_paths):
         clip_data = []
@@ -623,8 +629,8 @@ class ClipLoaderGGUF:
             folder_paths.get_folder_paths('embeddings'))
         clip.patcher = GGUFModelPatcher.clone(clip.patcher)
         return clip
-    def load_clip(self, clip_name, type='stable_diffusion', device='default'):
-        clip_path = folder_paths.get_full_path('clip', clip_name)
+    def load_clip(self, clip_name, type='stable_diffusion', device='default', context: execution_context.ExecutionContext=None):
+        clip_path = folder_paths.get_full_path(context, 'clip', clip_name)
         if clip_name.endswith('.safetensors'):
             clip = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=get_clip_type(type), model_options=get_device(device))
             return (clip,)
@@ -632,16 +638,17 @@ class ClipLoaderGGUF:
             return (self.load_patcher([clip_path], get_clip_type(type), self.load_data([clip_path])), get_device('default'))
 class DualClipLoaderGGUF(ClipLoaderGGUF):
     @classmethod
-    def INPUT_TYPES(s):
-        base = nodes.DualCLIPLoader.INPUT_TYPES()
-        file_options = s.get_filename_list(),
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        base = nodes.DualCLIPLoader.INPUT_TYPES(context)
+        file_options = s.get_filename_list(context),
         return {'required': {'clip_name1':file_options, 'clip_name2':file_options, 'type':
                              base['required']['type']},
-                             'optional':{'device':(['default','cpu'],{'advanced':True}),}}
+                'optional':{'device':(['default','cpu'],{'advanced':True}),},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     TITLE = 'GGUF DualCLIP Loader'
-    def load_clip(self, clip_name1, clip_name2, type, device='default'):
-        clip_path1 = folder_paths.get_full_path('clip', clip_name1)
-        clip_path2 = folder_paths.get_full_path('clip', clip_name2)
+    def load_clip(self, clip_name1, clip_name2, type, device='default', context: execution_context.ExecutionContext=None):
+        clip_path1 = folder_paths.get_full_path(context, 'clip', clip_name1)
+        clip_path2 = folder_paths.get_full_path(context, 'clip', clip_name2)
         clip_paths = clip_path1, clip_path2
         if device != 'default' and (clip_name1.endswith('.safetensors') and clip_name2.endswith('.safetensors')):
             clip = comfy.sd.load_clip(ckpt_paths=clip_paths, embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=get_clip_type(type), model_options=get_device(device))
@@ -650,29 +657,31 @@ class DualClipLoaderGGUF(ClipLoaderGGUF):
             return (self.load_patcher(clip_paths, get_clip_type(type), self.load_data(clip_paths)), get_device(device))
 class TripleClipLoaderGGUF(ClipLoaderGGUF):
     @classmethod
-    def INPUT_TYPES(s):
-        file_options = s.get_filename_list(),
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        file_options = s.get_filename_list(context),
         return {'required': {'clip_name1': file_options, 'clip_name2':
-            file_options, 'clip_name3': file_options}}
+            file_options, 'clip_name3': file_options},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     TITLE = 'GGUF TripleCLIP Loader'
-    def load_clip(self, clip_name1, clip_name2, clip_name3, type='sd3'):
-        clip_path1 = folder_paths.get_full_path('clip', clip_name1)
-        clip_path2 = folder_paths.get_full_path('clip', clip_name2)
-        clip_path3 = folder_paths.get_full_path('clip', clip_name3)
+    def load_clip(self, clip_name1, clip_name2, clip_name3, type='sd3', context: execution_context.ExecutionContext=None):
+        clip_path1 = folder_paths.get_full_path(context, 'clip', clip_name1)
+        clip_path2 = folder_paths.get_full_path(context, 'clip', clip_name2)
+        clip_path3 = folder_paths.get_full_path(context, 'clip', clip_name3)
         clip_paths = clip_path1, clip_path2, clip_path3
         return (self.load_patcher(clip_paths, get_clip_type(type), self.load_data(clip_paths)),)
 class QuadrupleClipLoaderGGUF(ClipLoaderGGUF):
     @classmethod
-    def INPUT_TYPES(s):
-        file_options = s.get_filename_list(),
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        file_options = s.get_filename_list(context),
         return {'required': {'clip_name1': file_options, 'clip_name2':
-            file_options, 'clip_name3': file_options, 'clip_name4': file_options}}
+            file_options, 'clip_name3': file_options, 'clip_name4': file_options},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     TITLE = 'GGUF QuadrupleCLIP Loader'
-    def load_clip(self, clip_name1, clip_name2, clip_name3, clip_name4, type='hunyuan_video'):
-        clip_path1 = folder_paths.get_full_path('clip', clip_name1)
-        clip_path2 = folder_paths.get_full_path('clip', clip_name2)
-        clip_path3 = folder_paths.get_full_path('clip', clip_name3)
-        clip_path4 = folder_paths.get_full_path('clip', clip_name4)
+    def load_clip(self, clip_name1, clip_name2, clip_name3, clip_name4, type='hunyuan_video', context: execution_context.ExecutionContext=None):
+        clip_path1 = folder_paths.get_full_path(context, 'clip', clip_name1)
+        clip_path2 = folder_paths.get_full_path(context, 'clip', clip_name2)
+        clip_path3 = folder_paths.get_full_path(context, 'clip', clip_name3)
+        clip_path4 = folder_paths.get_full_path(context, 'clip', clip_name4)
         clip_paths = clip_path1, clip_path2, clip_path3, clip_path4
         return (self.load_patcher(clip_paths, get_clip_type(type), self.load_data(clip_paths)),)
 QUANTIZATION_THRESHOLD = 1024
@@ -808,30 +817,32 @@ if 'select_safetensors' not in folder_paths.folder_names_and_paths:
     folder_paths.folder_names_and_paths['select_safetensors'] = orig[0], {'.safetensors'}
 class GGUFSave:
     def __init__(self):
-        self.output_dir = folder_paths.get_output_directory()
+        # self.output_dir = folder_paths.get_output_directory()
+        pass
     @classmethod
-    def INPUT_TYPES(s):
-        return {'required': {'select_safetensors': (s.get_filename_list(),)}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext=None):
+        return {'required': {'select_safetensors': (s.get_filename_list(context),)}}
     RETURN_TYPES = ()
     FUNCTION = 'save'
     OUTPUT_NODE = True
     CATEGORY = 'gguf'
     TITLE = 'GGUF Convertor (Alpha)'
     @classmethod
-    def get_filename_list(s):
+    def get_filename_list(s, context: execution_context.ExecutionContext):
         files = []
-        files += folder_paths.get_filename_list('select_safetensors')
+        files += folder_paths.get_filename_list(context, 'select_safetensors')
         return sorted(files)
-    def save(self, select_safetensors):
-        path = folder_paths.get_full_path('select_safetensors',
+    def save(self, select_safetensors, context: execution_context.ExecutionContext):
+        output_dir = folder_paths.get_output_directory(context.user_hash)
+        path = folder_paths.get_full_path(context, 'select_safetensors',
             select_safetensors)
         writer, state_dict, model_arch = load_model(path)
         writer.add_quantization_version(GGML_QUANT_VERSION)
         if next(iter(state_dict.values())).dtype == torch.bfloat16:
-            output_path = (f'{self.output_dir}/{os.path.splitext(select_safetensors)[0]}-bf16.gguf')
+            output_path = (f'{output_dir}/{os.path.splitext(select_safetensors)[0]}-bf16.gguf')
             writer.add_file_type(LlamaFileType.MOSTLY_BF16)
         else:
-            output_path = (f'{self.output_dir}/{os.path.splitext(select_safetensors)[0]}-f16.gguf')
+            output_path = (f'{output_dir}/{os.path.splitext(select_safetensors)[0]}-f16.gguf')
             writer.add_file_type(LlamaFileType.MOSTLY_F16)
         if os.path.isfile(output_path):
             input('Output exists enter to continue or ctrl+c to abort!')
@@ -843,30 +854,34 @@ class GGUFSave:
         return {}
 class GGUFRun:
     def __init__(self):
-        self.output_dir = folder_paths.get_output_directory()
+        # self.output_dir = folder_paths.get_output_directory(context)
+        pass
     @classmethod
-    def INPUT_TYPES(s):
-        return {'required': {'select_safetensors': (s.get_filename_list(),)}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        return {'required': {'select_safetensors': (s.get_filename_list(context),)}}
     RETURN_TYPES = ()
     FUNCTION = 'run'
     OUTPUT_NODE = True
     CATEGORY = 'gguf'
     TITLE = 'GGUF Convertor (Zero)'
     @classmethod
-    def get_filename_list(s):
+    def get_filename_list(s, context: execution_context.ExecutionContext):
         files = []
-        files += folder_paths.get_filename_list('select_safetensors')
+        files += folder_paths.get_filename_list(context, 'select_safetensors')
         return sorted(files)
-    def run(self, select_safetensors):
-        path = folder_paths.get_full_path('select_safetensors',
+    def run(self, select_safetensors, context: execution_context.ExecutionContext):
+        path = folder_paths.get_full_path(context, 'select_safetensors',
             select_safetensors)
         writer, state_dict, model_arch = load_pig(path)
         writer.add_quantization_version(GGML_QUANT_VERSION)
+        output_dir = folder_paths.get_output_directory(context.user_hash)
         if next(iter(state_dict.values())).dtype == torch.bfloat16:
-            output_path = (f'{self.output_dir}/{os.path.splitext(select_safetensors)[0]}-bf16.gguf')
+            output_path = (f'{output_dir}/{os.path.splitext(select_safetensors)[0]}-bf16.gguf')
             writer.add_file_type(LlamaFileType.MOSTLY_BF16)
         else:
-            output_path = (f'{self.output_dir}/{os.path.splitext(select_safetensors)[0]}-f16.gguf')
+            output_path = (
+                f'{output_dir}/{os.path.splitext(select_safetensors)[0]}-f16.gguf'
+            )
             writer.add_file_type(LlamaFileType.MOSTLY_F16)
         if os.path.isfile(output_path):
             input('Output exists enter to continue or ctrl+c to abort!')
@@ -888,23 +903,29 @@ def quantize_to_fp8(tensor):
     return quantized_tensor.to(torch.float8_e4m3fn)
 class TENSORCut:
     def __init__(self):
-        self.output_dir = folder_paths.get_output_directory()
+        # self.output_dir = folder_paths.get_output_directory()
+        pass
     @classmethod
-    def INPUT_TYPES(s):
-        return {'required': {'select_safetensors': (s.get_filename_list(),)}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext=None):
+        return {'required': {'select_safetensors': (s.get_filename_list(context),)},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     RETURN_TYPES = ()
     FUNCTION = 'cut'
     OUTPUT_NODE = True
     CATEGORY = 'gguf'
     TITLE = 'TENSOR Cutter (Beta)'
     @classmethod
-    def get_filename_list(s):
+    def get_filename_list(s, context: execution_context.ExecutionContext):
         files = []
-        files += folder_paths.get_filename_list('select_safetensors')
+        files += folder_paths.get_filename_list(context, 'select_safetensors')
         return sorted(files)
-    def cut(self, select_safetensors):
-        input_file = folder_paths.get_full_path('select_safetensors', select_safetensors)
-        output_file = (f'{self.output_dir}/{os.path.splitext(select_safetensors)[0]}_fp8_e4m3fn.safetensors')
+    def cut(self, select_safetensors, context: execution_context.ExecutionContext):
+        input_file = folder_paths.get_full_path(context, 'select_safetensors', select_safetensors)
+
+        output_dir = folder_paths.get_output_directory(context.user_hash)
+        output_file = (
+            f'{output_dir}/{os.path.splitext(select_safetensors)[0]}_fp8_e4m3fn.safetensors'
+        )
         data = load_file(input_file)
         quantized_data = {}
         print('Starting quantization process...')
@@ -917,24 +938,30 @@ class TENSORCut:
         return {}
 class TENSORBoost:
     def __init__(self):
-        self.output_dir = folder_paths.get_output_directory()
+        # self.output_dir = folder_paths.get_output_directory()
+        pass
     @classmethod
-    def INPUT_TYPES(s):
-        return {'required': {'select_safetensors': (s.get_filename_list(),)}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext=None):
+        return {'required': {'select_safetensors': (s.get_filename_list(context),)},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     RETURN_TYPES = ()
     FUNCTION = 'boost'
     OUTPUT_NODE = True
     CATEGORY = 'gguf'
     TITLE = 'TENSOR Booster'
     @classmethod
-    def get_filename_list(s):
+    def get_filename_list(s, context: execution_context.ExecutionContext):
         files = []
-        files += folder_paths.get_filename_list('select_safetensors')
+        files += folder_paths.get_filename_list(context, 'select_safetensors')
         return sorted(files)
-    def boost(self, select_safetensors):
-        input_file = folder_paths.get_full_path('select_safetensors',
+    def boost(self, select_safetensors, context: execution_context.ExecutionContext):
+        input_file = folder_paths.get_full_path(context, 'select_safetensors',
             select_safetensors)
-        output_file = (f'{self.output_dir}/{os.path.splitext(select_safetensors)[0]}_fp32.safetensors')
+
+        output_dir = folder_paths.get_output_directory(context.user_hash)
+        output_file = (
+            f'{output_dir}/{os.path.splitext(select_safetensors)[0]}_fp32.safetensors'
+        )
         data = load_file(input_file)
         quantized_data = {}
         print('Starting quantization process...')
@@ -983,33 +1010,36 @@ if 'select_gguf' not in folder_paths.folder_names_and_paths:
     folder_paths.folder_names_and_paths['select_gguf'] = orig[0], {'.gguf'}
 class GGUFUndo:
     def __init__(self):
-        self.output_dir = folder_paths.get_output_directory()
+        # self.output_dir = folder_paths.get_output_directory()
+        pass
     @classmethod
-    def INPUT_TYPES(s):
-        return {'required': {'select_gguf': (s.get_filename_list(),)}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext=None):
+        return {'required': {'select_gguf': (s.get_filename_list(context),)},
+                'hidden': {'context': 'EXECUTION_CONTEXT'}}
     RETURN_TYPES = ()
     FUNCTION = 'undo'
     OUTPUT_NODE = True
     CATEGORY = 'gguf'
     TITLE = 'GGUF Convertor (Reverse)'
     @classmethod
-    def get_filename_list(s):
+    def get_filename_list(s, context: execution_context.ExecutionContext):
         files = []
-        files += folder_paths.get_filename_list('select_gguf')
+        files += folder_paths.get_filename_list(context, 'select_gguf')
         return sorted(files)
-    def undo(self, select_gguf):
-        in_file = folder_paths.get_full_path('select_gguf', select_gguf)
-        out_file = (f'{self.output_dir}/{os.path.splitext(select_gguf)[0]}_fp16.safetensors')
+    def undo(self, select_gguf, context: execution_context.ExecutionContext):
+        in_file = folder_paths.get_full_path(context, 'select_gguf', select_gguf)
+        output_dir = folder_paths.get_output_directory(context.user_hash)
+        out_file = (f'{output_dir}/{os.path.splitext(select_gguf)[0]}_fp16.safetensors')
         use_bf16 = False
         convert_gguf_to_safetensors(in_file, out_file, use_bf16)
         return {}
 class VaeGGUF:
     @staticmethod
-    def vae_list():
+    def vae_list(context: execution_context.ExecutionContext):
         vaes = []
-        vaes += folder_paths.get_filename_list('vae')
-        vaes += folder_paths.get_filename_list('vae_gguf')
-        approx_vaes = folder_paths.get_filename_list('vae_approx')
+        vaes += folder_paths.get_filename_list(context, 'vae')
+        vaes += folder_paths.get_filename_list(context, 'vae_gguf')
+        approx_vaes = folder_paths.get_filename_list(context, 'vae_approx')
         sdxl_taesd_enc = False
         sdxl_taesd_dec = False
         sd1_taesd_enc = False
@@ -1045,17 +1075,17 @@ class VaeGGUF:
             vaes.append('taef1')
         return vaes
     @staticmethod
-    def load_taesd(name):
+    def load_taesd(name, context: execution_context.ExecutionContext):
         sd = {}
-        approx_vaes = folder_paths.get_filename_list('vae_approx')
+        approx_vaes = folder_paths.get_filename_list(context, 'vae_approx')
         encoder = next(filter(lambda a: a.startswith('{}_encoder.'.format(name)), approx_vaes))
         decoder = next(filter(lambda a: a.startswith('{}_decoder.'.format(name)), approx_vaes))
         enc = comfy.utils.load_torch_file(folder_paths.
-            get_full_path_or_raise('vae_approx', encoder))
+            get_full_path_or_raise(context, 'vae_approx', encoder))
         for k in enc:
             sd['taesd_encoder.{}'.format(k)] = enc[k]
         dec = comfy.utils.load_torch_file(folder_paths.
-            get_full_path_or_raise('vae_approx', decoder))
+            get_full_path_or_raise(context, 'vae_approx', decoder))
         for k in dec:
             sd['taesd_decoder.{}'.format(k)] = dec[k]
         if name == 'taesd':
@@ -1072,43 +1102,45 @@ class VaeGGUF:
             sd['vae_shift'] = torch.tensor(0.1159)
         return sd
     @classmethod
-    def INPUT_TYPES(s):
-        return {'required': {'vae_name': (s.vae_list(),)}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        return {'required': {'vae_name': (s.vae_list(context),)},
+                'hidden': {'context': 'EXECUTION_CONTEXT',}}
     RETURN_TYPES = 'VAE',
     FUNCTION = 'load_vae'
     CATEGORY = 'gguf'
     TITLE = 'GGUF VAE Loader'
-    def load_vae(self, vae_name):
+    def load_vae(self, vae_name, context: execution_context.ExecutionContext):
         if vae_name.endswith('.gguf'):
-            vae_path = folder_paths.get_full_path_or_raise('vae_gguf', vae_name)
+            vae_path = folder_paths.get_full_path_or_raise(context, 'vae_gguf', vae_name)
             sd = load_gguf_clip(vae_path)
         elif vae_name in ['taesd', 'taesdxl', 'taesd3', 'taef1']:
-            sd = self.load_taesd(vae_name)
+            sd = self.load_taesd(vae_name, context)
         else:
-            vae_path = folder_paths.get_full_path_or_raise('vae', vae_name)
+            vae_path = folder_paths.get_full_path_or_raise(context, 'vae', vae_name)
             sd = comfy.utils.load_torch_file(vae_path)
         vae = comfy.sd.VAE(sd=sd)
         return vae,
 class AudioEncoderLoaderGGUF:
     @staticmethod
-    def get_encoder_list():
+    def get_encoder_list(context: execution_context.ExecutionContext):
         encoders = []
-        encoders += folder_paths.get_filename_list('audio_encoders')
-        encoders += folder_paths.get_filename_list('encoder_gguf')
+        encoders += folder_paths.get_filename_list(context, 'audio_encoders')
+        encoders += folder_paths.get_filename_list(context, 'encoder_gguf')
         return sorted(encoders)
     @classmethod
-    def INPUT_TYPES(s):
-        return {"required": { "audio_encoder_name": (s.get_encoder_list(), ),}}
+    def INPUT_TYPES(s, context: execution_context.ExecutionContext):
+        return {"required": { "audio_encoder_name": (s.get_encoder_list(context), ),},
+                "hidden": {"context": "EXECUTION_CONTEXT",}}
     RETURN_TYPES = ("AUDIO_ENCODER",)
     FUNCTION = "load_model"
     CATEGORY = 'gguf'
     TITLE = 'GGUF AudioEncoder Loader'
-    def load_model(self, audio_encoder_name):
+    def load_model(self, audio_encoder_name, context: execution_context.ExecutionContext):
         if audio_encoder_name.endswith('.gguf'):
-            encoder_path = folder_paths.get_full_path_or_raise('encoder_gguf', audio_encoder_name)
+            encoder_path = folder_paths.get_full_path_or_raise(context, 'encoder_gguf', audio_encoder_name)
             sd = load_gguf_clip(encoder_path)
         else:
-            audio_encoder_name = folder_paths.get_full_path_or_raise("audio_encoders", audio_encoder_name)
+            audio_encoder_name = folder_paths.get_full_path_or_raise(context, "audio_encoders", audio_encoder_name)
             sd = comfy.utils.load_torch_file(audio_encoder_name, safe_load=True)
         from comfy.audio_encoders.audio_encoders import load_audio_encoder_from_sd
         audio_encoder = load_audio_encoder_from_sd(sd)
@@ -1121,13 +1153,13 @@ NODE_CLASS_MAPPINGS = {
     "ClipLoaderGGUF": ClipLoaderGGUF,
     "DualClipLoaderGGUF": DualClipLoaderGGUF,
     "TripleClipLoaderGGUF": TripleClipLoaderGGUF,
-    "QuadrupleClipLoaderGGUF": QuadrupleClipLoaderGGUF,
+    # "QuadrupleClipLoaderGGUF": QuadrupleClipLoaderGGUF,
     "AudioEncoderLoaderGGUF": AudioEncoderLoaderGGUF,
     "LoaderGGUFAdvanced": LoaderGGUFAdvanced,
     "VaeGGUF": VaeGGUF,
-    "GGUFUndo": GGUFUndo,
-    "GGUFSave": GGUFSave,
-    "GGUFRun": GGUFRun,
-    "TENSORCut": TENSORCut,
-    "TENSORBoost": TENSORBoost,
+    # "GGUFUndo": GGUFUndo,
+    # "GGUFSave": GGUFSave,
+    # "GGUFRun": GGUFRun,
+    # "TENSORCut": TENSORCut,
+    # "TENSORBoost": TENSORBoost,
 }
