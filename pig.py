@@ -567,6 +567,7 @@ class LoaderGGUF:
         valid_params = inspect.signature(comfy.sd.load_diffusion_model_state_dict).parameters
         if "metadata" in valid_params:
             kwargs["metadata"] = extra.get("metadata", {})
+        kwargs["model_name"] = gguf_name
         model = comfy.sd.load_diffusion_model_state_dict(sd, model_options=
             {"custom_operations": ops}, **kwargs,)
         if model is None:
