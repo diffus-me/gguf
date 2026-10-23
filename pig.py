@@ -534,8 +534,18 @@ class LoaderGGUF:
     @classmethod
     def INPUT_TYPES(s, context: execution_context.ExecutionContext):
         gguf_names = [x for x in folder_paths.get_filename_list(context, 'model_gguf')]
-        return {'required': {'gguf_name': (gguf_names,)},
-                'hidden': {'context': 'EXECUTION_CONTEXT'}}
+        return {'required': {
+            'gguf_name': (
+                gguf_names,
+                {
+                    "model_selector": {
+                        "model_types": ["diffusion_models"],
+                        "quantization": "GGUF"
+                    },
+                }
+            )},
+            'hidden': {'context': 'EXECUTION_CONTEXT'}
+        }
     RETURN_TYPES = 'MODEL',
     FUNCTION = 'load_model'
     CATEGORY = 'gguf'
@@ -556,6 +566,8 @@ class LoaderGGUF:
         else:
             ops.Linear.patch_dtype = getattr(torch, patch_dtype)
         model_path = folder_paths.get_full_path(context, 'unet', gguf_name)
+        if hasattr(model_path, 'filename'):
+            model_path = model_path.filename
         # sd, metadata = load_gguf_sd(model_path)
         # model = comfy.sd.load_diffusion_model_state_dict(sd, model_options=
         #     {'custom_operations': ops}, metadata=metadata)
@@ -581,7 +593,16 @@ class LoaderGGUFAdvanced(LoaderGGUF):
     @classmethod
     def INPUT_TYPES(s, context: execution_context.ExecutionContext):
         model_names = [x for x in folder_paths.get_filename_list(context, 'model_gguf')]
-        return {'required': {'gguf_name': (model_names,), 'dequant_dtype':
+        return {'required': {
+            'gguf_name': (
+                model_names,
+                {
+                    "model_selector": {
+                        "model_types": ["diffusion_models"],
+                        "quantization": "GGUF"
+                    },
+                }
+            ), 'dequant_dtype':
             (['default', 'target', 'float32', 'float16', 'bfloat16'], {
             'default': 'default'}), 'patch_dtype': (['default', 'target',
             'float32', 'float16', 'bfloat16'], {'default': 'default'}),
